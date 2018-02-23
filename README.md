@@ -1,6 +1,6 @@
 # the-moon
 
-Code for 'The Moon' project - a Wifi connected moon phase wall piece
+Arduino code for 'The Moon' project - a Wifi connected moon phase wall piece
 
 ## Hardware Used
 - Wemos D1 Mini
