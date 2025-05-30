@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRTC Client</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <h1>WebRTC Client Page</h1>
+    <div id="controls">
+        <button id="joinQueueButton">Join Queue</button>
+    </div>
+    <div id="status">Status: Idle</div>
+    <div id="queueInfo">Queue Position: N/A</div>
+    <div id="timerDisplay">Time Left: --:--</div>
+    <div>
+        <video id="remoteVideo" autoplay playsinline width="640" height="480"></video>
+    </div>
+
+    <script src="js/client.js"></script>
+</body>
+</html>
