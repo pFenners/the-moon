@@ -9,6 +9,8 @@ This project is a web application that demonstrates a client queuing system for 
 *   **Timed Viewing:** Each client at the front of the queue gets 5 minutes to view the stream.
 *   **Automatic Switching:** The system automatically switches to the next client when the current client's time is up.
 *   **Real-time Updates:** WebSocket is used for signaling and queue status updates.
+*   **Remote Control (Client to Host):** Current client can send mouse movements and W,A,S,D keyboard commands to the host over a WebRTC data channel. Host currently logs these inputs.
+*   **Client Preparation Countdown:** A 3-second countdown is displayed to the client before their session becomes fully active.
 
 ## Technology Stack
 
@@ -47,7 +49,10 @@ This project is a web application that demonstrates a client queuing system for 
     *   Open a web browser and go to `http://localhost:8080/host.html`.
     *   Click the "Become Host" button.
     *   Allow camera and microphone permissions when prompted by the browser.
-    *   The host page will show a preview of the local video and indicate it's waiting for clients.
+    *   The host page will show a preview of the local video.
+    *   **Queue Display:** Below the video, the host will see a list of clients currently in the queue. The client actively streaming will be highlighted.
+    *   **Ending a Session:** If a client is currently streaming, an "End Current Client's Session" button will be visible. The host can click this button to immediately terminate that client's session and allow the next client in queue to start streaming.
+    *   The status will indicate it's waiting for clients or streaming to a specific client.
 
 2.  **Client(s) Joining:**
     *   Open one or more web browser tabs/windows and go to `http://localhost:8080/` (or `http://localhost:8080/index.html`).
@@ -59,6 +64,21 @@ This project is a web application that demonstrates a client queuing system for 
     *   The current client views the stream.
     *   Other clients in the queue will see their updated queue position.
     *   When the 5-minute timer for the current client expires, they will be disconnected from the stream, and the next client in the queue will automatically start receiving the stream.
+
+### Client Remote Control (When Actively Streaming)
+
+When it's a client's turn to view the stream, they will first see a 3-second preparation countdown overlay on the video.
+
+Once the countdown ("Go!") finishes:
+1.  **Activate Control Mode:** Click on the video area. This will hide your mouse cursor and enable control input. The status message will confirm you are in control mode.
+2.  **Mouse Control:** Move your mouse. Relative mouse movements (changes in X and Y) will be sent to the host.
+3.  **Keyboard Control:**
+    *   Press **W, A, S, D** keys to send directional commands (forwards, left, backwards, right).
+    *   "Key down" messages are sent when a key is first pressed.
+    *   "Key up" messages are sent when the key is released.
+4.  **Exit Control Mode:** Press the **Escape (Esc)** key. This will show your mouse cursor again and pause sending control inputs. You can click the video again to re-activate control mode.
+
+**Note for Host:** Currently, the host application logs these received mouse and keyboard control messages to the browser's developer console. Implementing actions based on these controls on the host side (e.g., controlling a game or application) is a separate development task beyond the current scope of this application.
 
 ## Notes
 

@@ -2,21 +2,35 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WebRTC Client</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css"> <!-- Custom styles -->
 </head>
 <body>
-    <h1>WebRTC Client Page</h1>
-    <div id="controls">
-        <button id="joinQueueButton">Join Queue</button>
-    </div>
-    <div id="status">Status: Idle</div>
-    <div id="queueInfo">Queue Position: N/A</div>
-    <div id="timerDisplay">Time Left: --:--</div>
-    <div>
-        <video id="remoteVideo" autoplay playsinline width="640" height="480"></video>
-    </div>
+    <div class="container mt-4">
+        <header class="text-center mb-4">
+            <h1>WebRTC Client Page</h1>
+        </header>
 
+        <div id="controls" class="text-center mb-3">
+            <button id="joinQueueButton" class="btn btn-success btn-lg">Join Queue</button>
+        </div>
+
+        <div id="status" class="alert alert-info" role="alert">Status: Idle</div>
+        <div id="queueInfo" class="alert alert-secondary" role="alert">Queue Position: N/A</div>
+        <div id="timerDisplay" class="alert alert-warning text-center fw-bold fs-4" role="alert">Time Left: --:--</div>
+
+        <div class="row justify-content-center mt-3">
+            <div class="col-md-8 col-lg-6 position-relative"> <!-- Added position-relative for overlay -->
+                <video id="remoteVideo" autoplay playsinline class="img-fluid border rounded shadow-sm bg-dark"></video>
+                <div id="preparationOverlay" class="position-absolute top-50 start-50 translate-middle bg-dark bg-opacity-75 text-white p-4 rounded d-flex justify-content-center align-items-center" style="display: none; font-size: 3rem; text-align: center; width: 150px; height: 150px;">
+                    <span id="preparationCountdownText">3</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js/client.js"></script>
 </body>
 </html>

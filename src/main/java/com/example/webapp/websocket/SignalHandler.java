@@ -10,9 +10,11 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-import com.fasterxml.jackson.databind.ObjectMapper; // For JSON parsing
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -23,27 +25,46 @@ public class SignalHandler extends TextWebSocketHandler {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private WebSocketSession hostSession = null;
     private final QueueService queueService;
-    private final ObjectMapper objectMapper = new ObjectMapper(); // For parsing JSON messages
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     public SignalHandler(QueueService queueService) {
         this.queueService = queueService;
-        // Set the callback in QueueService for when a client's time is up
-        this.queueService.setOnTimeUpCallback(this::handleTimeUp);
+        this.queueService.setOnTimeUpCallback(this::handleTimeUpTriggeredByTimer); // Renamed for clarity
+        this.queueService.setOnQueueChangedCallback(qs -> sendQueueStateToHost());
+    }
+
+    private void sendQueueStateToHost() {
+        if (hostSession != null && hostSession.isOpen()) {
+            Map<String, Object> queueState = new HashMap<>();
+            queueState.put("type", "queue-state-update");
+            synchronized (queueService) {
+                queueState.put("currentClient", queueService.getCurrentClient());
+                queueState.put("queuedClients", queueService.getQueuedClientIds());
+            }
+            try {
+                sendMessage(hostSession, queueState);
+                logger.info("Sent queue state update to host {}: current='{}', queue={}",
+                    hostSession.getId(), queueState.get("currentClient"), queueState.get("queuedClients"));
+            } catch (IOException e) {
+                logger.error("Error sending queue state to host {}: {}", hostSession.getId(), e.getMessage());
+            }
+        } else {
+            // logger.trace("Host not connected or session closed, cannot send queue state."); // Can be noisy
+        }
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         sessions.put(session.getId(), session);
         logger.info("WebSocket connection established: {}. Total sessions: {}", session.getId(), sessions.size());
-        // Send session ID to client for their reference (optional)
         sendMessage(session, Map.of("type", "session-id", "sessionId", session.getId()));
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         String payload = message.getPayload();
-        logger.info("Received message from {}: {}", session.getId(), payload);
+        // logger.debug("Received message from {}: {}", session.getId(), payload);
 
         Map<String, Object> msgMap;
         try {
@@ -60,20 +81,25 @@ public class SignalHandler extends TextWebSocketHandler {
             return;
         }
 
+        // logger.info("Processing message type '{}' from {}", type, session.getId());
+
+
         switch (type) {
             case "register-host":
+                // ... (existing code)
                 if (hostSession == null || !hostSession.isOpen()) {
                     hostSession = session;
                     logger.info("Session {} registered as HOST.", session.getId());
                     sendMessage(session, Map.of("type", "host-registered", "message", "Successfully registered as host."));
-                    // If a client is already waiting and current, notify host
-                    String currentClient = queueService.getCurrentClient();
+                    sendQueueStateToHost();
+
+                    String currentClient;
+                    synchronized(queueService){ currentClient = queueService.getCurrentClient(); }
+
                     if (currentClient != null && sessions.containsKey(currentClient)) {
                          notifyHostAboutCurrentClient(currentClient);
                     } else if (currentClient == null) {
-                        // No current client, try to process next from queue
                         queueService.processNextClient();
-                        // processNextClient will eventually call notifyHost if a new client becomes current
                     }
                 } else {
                     logger.warn("Attempt to register host from {} when host {} already exists.", session.getId(), hostSession.getId());
@@ -81,32 +107,56 @@ public class SignalHandler extends TextWebSocketHandler {
                     session.close(CloseStatus.POLICY_VIOLATION.withReason("Host already registered."));
                 }
                 break;
-            case "offer": // From host to current client
+            case "offer":
                 handleWebRTCSignal("offer", session, msgMap);
                 break;
-            case "answer": // From current client to host
+            case "answer":
                 handleWebRTCSignal("answer", session, msgMap);
                 break;
-            case "ice-candidate": // Bidirectional
+            case "ice-candidate":
                 handleWebRTCSignal("ice-candidate", session, msgMap);
                 break;
-            // Client-specific messages (could also be handled by QueueController if preferred for initial join)
-            case "join-queue-ws": // Client wants to join queue via WebSocket
+            case "join-queue-ws":
+                // ... (existing code)
                 String clientId = session.getId();
                 boolean added = queueService.addClient(clientId);
                  Map<String, Object> response = new ConcurrentHashMap<>();
                  response.put("type", added ? "queue-joined" : "queue-join-failed");
                  response.put("sessionId", clientId);
                  response.put("position", queueService.getClientPosition(clientId));
-                 response.put("isCurrent", queueService.getCurrentClient() != null && queueService.getCurrentClient().equals(clientId));
+
+                 String currentClientWsJoin;
+                 synchronized(queueService) { currentClientWsJoin = queueService.getCurrentClient(); }
+                 response.put("isCurrent", currentClientWsJoin != null && currentClientWsJoin.equals(clientId));
+
                  sendMessage(session, response);
-                 if (added && queueService.getCurrentClient() != null && queueService.getCurrentClient().equals(clientId)) {
-                    // This client was added and immediately became current
+
+                 if (added && currentClientWsJoin != null && currentClientWsJoin.equals(clientId)) {
                     notifyClientIsCurrent(session);
                     if (hostSession != null && hostSession.isOpen()) {
                         notifyHostAboutCurrentClient(clientId);
                     }
                  }
+                break;
+            case "host-force-end-current-client": // New case
+                if (session == hostSession) {
+                    String currentClientSessionId;
+                    synchronized (queueService) { // Ensure atomic read of current client
+                        currentClientSessionId = queueService.getCurrentClient();
+                    }
+                    if (currentClientSessionId != null) {
+                        logger.info("Host {} is force-ending session for client {}.", session.getId(), currentClientSessionId);
+                        // Call a method that encapsulates the logic for ending a client's turn
+                        endClientTurn(currentClientSessionId, "Session ended by host.");
+                        sendMessage(session, Map.of("type", "ack-force-end", "clientId", currentClientSessionId, "message", "Ending session for " + currentClientSessionId));
+                    } else {
+                        logger.info("Host {} tried to force-end session, but no client is current.", session.getId());
+                        sendMessage(session, Map.of("type", "ack-force-end", "message", "No current client to end session for."));
+                    }
+                } else {
+                    logger.warn("Non-host session {} tried to use 'host-force-end-current-client'. Denied.", session.getId());
+                    sendMessage(session, Map.of("type", "error", "message", "Only host can force end a session."));
+                }
                 break;
             default:
                 logger.warn("Unknown message type '{}' from {}.", type, session.getId());
@@ -115,28 +165,32 @@ public class SignalHandler extends TextWebSocketHandler {
     }
 
     private void handleWebRTCSignal(String signalType, WebSocketSession session, Map<String, Object> msgMap) throws IOException {
-        String currentClientId = queueService.getCurrentClient();
-        Object sdp = msgMap.get("sdp"); // For offer/answer
-        Object candidate = msgMap.get("candidate"); // For ICE candidate
+        String currentClientId;
+        synchronized(queueService) { currentClientId = queueService.getCurrentClient(); }
 
-        if (session == hostSession) { // Message from HOST
-            if (currentClientId != null) {
-                WebSocketSession clientWsSession = sessions.get(currentClientId);
+        Object sdp = msgMap.get("sdp");
+        Object candidate = msgMap.get("candidate");
+        String targetClientIdSignal = (String) msgMap.get("targetClientId");
+
+        if (session == hostSession) {
+            String effectiveTarget = targetClientIdSignal != null ? targetClientIdSignal : currentClientId;
+            if (effectiveTarget != null) {
+                WebSocketSession clientWsSession = sessions.get(effectiveTarget);
                 if (clientWsSession != null && clientWsSession.isOpen()) {
-                    logger.info("Forwarding {} from HOST {} to CLIENT {}", signalType, hostSession.getId(), currentClientId);
+                    logger.info("Forwarding {} from HOST {} to CLIENT {}", signalType, hostSession.getId(), effectiveTarget);
                     Map<String, Object> forwardMsg = new ConcurrentHashMap<>();
                     forwardMsg.put("type", signalType);
                     if (sdp != null) forwardMsg.put("sdp", sdp);
                     if (candidate != null) forwardMsg.put("candidate", candidate);
                     sendMessage(clientWsSession, forwardMsg);
                 } else {
-                    logger.warn("Current client {} session not found or closed. Cannot forward {} from host.", currentClientId, signalType);
+                    logger.warn("Target client {} session not found or closed. Cannot forward {} from host.", effectiveTarget, signalType);
                 }
             } else {
-                logger.warn("Host {} sent {} but no current client in queue.", hostSession.getId(), signalType);
-                sendMessage(session, Map.of("type", "error", "message", "No active client to send " + signalType));
+                logger.warn("Host {} sent {} but no current client in queue or target specified.", hostSession.getId(), signalType);
+                sendMessage(session, Map.of("type", "error", "message", "No active client/target to send " + signalType));
             }
-        } else if (session.getId().equals(currentClientId)) { // Message from CURRENT CLIENT
+        } else if (session.getId().equals(currentClientId)) {
             if (hostSession != null && hostSession.isOpen()) {
                 logger.info("Forwarding {} from CLIENT {} to HOST {}", signalType, session.getId(), hostSession.getId());
                  Map<String, Object> forwardMsg = new ConcurrentHashMap<>();
@@ -148,7 +202,7 @@ public class SignalHandler extends TextWebSocketHandler {
                 logger.warn("Current client {} sent {} but host not available.", session.getId(), signalType);
                 sendMessage(session, Map.of("type", "error", "message", "Host not available to receive " + signalType));
             }
-        } else { // Message from a client NOT CURRENTLY ACTIVE for WebRTC signals
+        } else {
             logger.warn("Session {} (not current client) tried to send WebRTC signal '{}'. Ignoring.", session.getId(), signalType);
             sendMessage(session, Map.of("type", "error", "message", "You are not the active client for WebRTC."));
         }
@@ -186,24 +240,20 @@ public class SignalHandler extends TextWebSocketHandler {
         if (session == hostSession) {
             logger.info("Host {} disconnected.", session.getId());
             hostSession = null;
-            // Optionally notify all waiting clients that host is down
             sessions.values().forEach(s -> {
                 try {
                     sendMessage(s, Map.of("type", "host-disconnected", "message", "The host has disconnected."));
                 } catch (IOException e) { /* ignore */ }
             });
-            // Maybe clear the queue or handle this state more gracefully
         } else {
-            // If a client disconnects, remove them from the queue
             logger.info("Client {} disconnected. Removing from queue if present.", session.getId());
-            queueService.removeClient(session.getId()); // This will trigger processNextClient if they were current
+            queueService.removeClient(session.getId());
         }
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
         logger.error("Transport error for session {}: {}", session.getId(), exception.getMessage());
-        // Consider removing session or specific error handling
         if (session == hostSession) {
             hostSession = null;
         }
@@ -215,30 +265,31 @@ public class SignalHandler extends TextWebSocketHandler {
         if (session != null && session.isOpen()) {
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(messageData)));
         } else {
-            logger.warn("Attempted to send message to closed or null session.");
+            // logger.warn("Attempted to send message to closed or null session: {} msg: {}", session == null ? "null" : session.getId() , messageData.get("type"));
         }
     }
 
-    // This method is called by QueueService when a client's time is up
-    private void handleTimeUp(String expiredClientSessionId) {
-        logger.info("Handling time up for client {}.", expiredClientSessionId);
-        WebSocketSession expiredClientWsSession = sessions.get(expiredClientSessionId);
-        if (expiredClientWsSession != null && expiredClientWsSession.isOpen()) {
+    private void handleTimeUpTriggeredByTimer(String timedOutClientSessionId) {
+        logger.info("Timer expired for client {}.", timedOutClientSessionId);
+        endClientTurn(timedOutClientSessionId, "Your 5 minutes are up.");
+    }
+
+    private void endClientTurn(String clientToEndSessionId, String reasonMessage) {
+        logger.info("Ending turn for client {}. Reason: {}", clientToEndSessionId, reasonMessage);
+        WebSocketSession clientWsSession = sessions.get(clientToEndSessionId);
+        if (clientWsSession != null && clientWsSession.isOpen()) {
             try {
-                sendMessage(expiredClientWsSession, Map.of("type", "disconnect-peer", "message", "Your 5 minutes are up."));
-                // Optionally force close, but client should handle disconnect-peer
-                // expiredClientWsSession.close(CloseStatus.NORMAL.withReason("Time up"));
+                sendMessage(clientWsSession, Map.of("type", "disconnect-peer", "message", reasonMessage));
             } catch (IOException e) {
-                logger.error("Error sending disconnect-peer message to {}: {}", expiredClientSessionId, e.getMessage());
+                logger.error("Error sending disconnect-peer message to {}: {}", clientToEndSessionId, e.getMessage());
             }
         }
 
-        // Crucially, tell QueueService to move to the next client
-        // This needs to be thread-safe with other queue operations
-        // The currentClientSessionId in QueueService should be checked before processing next.
-        // If the client that timed out is still the current one, then process next.
-        synchronized(queueService) { // Synchronize on queueService to ensure consistency
-            if (expiredClientSessionId.equals(queueService.getCurrentClient())) {
+        synchronized(queueService) {
+            String currentClientInQueue;
+            currentClientInQueue = queueService.getCurrentClient(); // Get current client within synchronized block
+
+            if (clientToEndSessionId.equals(currentClientInQueue)) {
                 queueService.processNextClient();
                 String newCurrentClientId = queueService.getCurrentClient();
                 if (newCurrentClientId != null) {
@@ -246,20 +297,16 @@ public class SignalHandler extends TextWebSocketHandler {
                     if (newClientWsSession != null) {
                          notifyClientIsCurrent(newClientWsSession);
                     }
+                    // notifyHostAboutCurrentClient is implicitly handled by onQueueChanged->sendQueueStateToHost
+                    // and also explicitly if a new client becomes current and host is available.
                     if (hostSession != null && hostSession.isOpen()) {
-                        notifyHostAboutCurrentClient(newCurrentClientId);
-                    }
-                } else {
-                     if (hostSession != null && hostSession.isOpen()) {
-                        try {
-                            sendMessage(hostSession, Map.of("type", "queue-empty", "message", "The queue is now empty."));
-                        } catch (IOException e) {
-                             logger.error("Error sending queue-empty message to host: {}", e.getMessage());
-                        }
+                         notifyHostAboutCurrentClient(newCurrentClientId);
                     }
                 }
             } else {
-                logger.warn("Client {} timed out, but was no longer the current client. No action taken to advance queue.", expiredClientSessionId);
+                logger.warn("Attempted to end turn for client {}, but they are no longer the current client. Current is {}. No queue advancement.",
+                             clientToEndSessionId, currentClientInQueue);
+                sendQueueStateToHost();
             }
         }
     }

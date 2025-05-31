@@ -1,9 +1,39 @@
-body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
-h1 { color: #0056b3; }
-video { border: 2px solid #0056b3; margin-bottom: 10px; background-color: #000; }
-#status { margin-top: 10px; padding:10px; background-color: #e9ecef; border: 1px solid #ced4da; border-radius: 4px; }
-button {
-    background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px;
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* More modern font stack */
+    background-color: #f8f9fa; /* Bootstrap's light gray */
+    color: #212529; /* Bootstrap's default text color */
 }
-button:hover { background-color: #0056b3; }
-button:disabled { background-color: #cccccc; cursor: not-allowed; }
+
+/* Make video elements responsive if Bootstrap's img-fluid isn't enough or for aspect ratio */
+video {
+    width: 100%;
+    height: auto;
+    /* background-color: #000; Bootstrap class bg-dark added directly to client video */
+}
+
+/* Custom status styling if needed, though Bootstrap alerts are good */
+/* #status { margin-top: 10px; padding:10px; background-color: #e9ecef; border: 1px solid #ced4da; border-radius: 4px; } */
+
+/* Timer specific styling if Bootstrap's alert-warning isn't enough */
+#timerDisplay {
+    /* font-size: 1.2em; Bootstrap fs-4 used */
+    /* color: #dc3545; Bootstrap alert-warning has its own color scheme */
+}
+
+/* Ensure buttons have some margin if they are stacked or near other elements */
+/* button { margin-top: 5px; margin-bottom: 5px; } Bootstrap mb-3 or similar utility classes are used */
+
+#clientQueueList .list-group-item.current-client {
+    background-color: #cfe2ff; /* Bootstrap primary-subtle like color */
+    font-weight: bold;
+}
+
+#preparationOverlay {
+    z-index: 10; /* Ensure it's on top of the video */
+    /* Bootstrap classes handle most styling: position-absolute, top-50, start-50, translate-middle, bg-dark, bg-opacity-75, text-white, p-4, rounded */
+    /* font-size: 3rem; (already in style attribute for simplicity, but can be moved here) */
+    /* Added d-flex, justify-content-center, align-items-center in HTML for better text centering */
+    width: 150px; /* Example fixed size for the circle/square */
+    height: 150px; /* Example fixed size for the circle/square */
+    border-radius: 50%; /* Makes it a circle if width and height are equal */
+}
